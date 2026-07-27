@@ -1,0 +1,22 @@
+# TRAINING environment. Runs on the laptop only, never deployed.
+# Install:  C:\venvs\rci\Scripts\python.exe -m pip install -r requirements.txt
+
+# --- data handling ---
+pandas>=2.2
+numpy>=1.26
+openpyxl>=3.1          # reads the .xlsx the UCI dataset ships as
+pyarrow>=15.0          # parquet, so cleaned data reloads in ms instead of ~30s
+ucimlrepo>=0.0.7       # official UCI fetcher
+requests>=2.31         # zip-download fallback if ucimlrepo is unavailable
+
+# --- modelling (used from Phase 1 onward) ---
+scikit-learn>=1.5      # KMeans, StandardScaler, metrics, calibration
+xgboost>=2.1           # gradient boosting: repurchase, CLV challenger, ranker
+
+# --- testing ---
+pytest>=8.0
+
+# Added later, at the phase that needs them, to keep installs debuggable:
+#   Phase 2  lifetimes        (BG/NBD + Gamma-Gamma CLV baseline)
+#   Phase 3  shap             (explanations, precomputed offline)
+#   Phase 4  gensim           (item2vec embeddings)

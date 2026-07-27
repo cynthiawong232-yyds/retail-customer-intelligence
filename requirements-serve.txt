@@ -1,0 +1,17 @@
+# SERVING environment. This is what gets deployed to Railway.
+#
+# Deliberately tiny. Railway bills RAM at ~$10 per GB per month, so every
+# import that is only needed at TRAINING time and gets loaded at SERVE time
+# is money spent on nothing.
+#
+# Excluded on purpose:
+#   scikit-learn  - only the fitted KMeans centroids are needed, saved as .npy
+#   shap          - explanations are precomputed offline into a parquet file
+#   gensim        - only trains the embeddings; serving reads the saved .npy
+#   pandas        - not needed if artifacts are loaded as numpy arrays
+
+fastapi>=0.115
+uvicorn[standard]>=0.32
+numpy>=1.26
+xgboost>=2.1           # the only real model that must run at request time
+joblib>=1.4            # loads the saved boosters
