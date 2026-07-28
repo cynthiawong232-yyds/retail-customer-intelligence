@@ -1,5 +1,32 @@
 """The temporal split. The most important file in this repo.
 
+VOCABULARY (read this first)
+----------------------------
+FEATURE   An input the model learns from. One number per customer, e.g.
+          "days since last purchase = 71". Features do NOT exist yet in
+          this file; they are built in Phase 1. What this file produces is
+          the pool of transactions features are *allowed* to be built from.
+
+LABEL     The answer we are trying to predict. Also called the target.
+          This file creates two:
+            repurchased  = 1 or 0   did they buy in the next 90 days
+            future_spend = pounds   how much they spent in those 90 days
+          The repurchase model predicts the first, CLV predicts the second.
+
+GRAIN     What one row means. The raw data is TRANSACTION grain (one row per
+          product line on an invoice). Models need CUSTOMER grain (one row
+          per person). That conversion is Phase 1's job.
+
+TRAIN     The data the model learns from. It sees both features and labels.
+
+TEST      The data the model is GRADED on. It sees the features; we hide the
+          labels and use them to mark the exam. Test is for EVALUATION, not
+          for prediction. Test labels exist and we know them.
+
+PRODUCTION  The real job, later. Features exist, labels do not exist yet,
+          because the 90 days have not happened. That asymmetry is the whole
+          reason train and test must be separated by time and not at random.
+
 WHY THIS FILE EXISTS
 --------------------
 Every model here answers a question about the FUTURE using facts from the
@@ -98,20 +125,55 @@ def make_snapshot(
     cannot be scored, because standing at the cutoff we have never heard of
     them. Including them would quietly inflate the negative class.
     """
+    # Accept a string like "2011-06-12" or a Timestamp; normalise to one type
+    # so every comparison below is timestamp-vs-timestamp.
     cutoff = pd.Timestamp(cutoff)
+
+    # The far edge of the label window. cutoff=2011-06-12 + 90d = 2011-09-10.
     window_end = cutoff + pd.Timedelta(days=window_days)
 
+    # ---- THE PAST -------------------------------------------------------
+    # Every purchase STRICTLY before the cutoff ("<", never "<=").
+    # This is the ONLY table feature engineering is allowed to read.
+    # .copy() because we hand this out to callers who will add columns to it,
+    # and modifying a slice of the original would be a pandas trap.
     observation = purchases[purchases["invoice_date"] < cutoff].copy()
+
+    # ---- THE FUTURE -----------------------------------------------------
+    # Purchases inside the 90-day label window: on/after the cutoff, before
+    # the window closes. This is where the ANSWER comes from, and no feature
+    # may ever touch it.
+    #   >= cutoff    the cutoff day itself belongs to the future
+    #   <  window_end   anything past 90 days is beyond the question we asked
     future = purchases[
         (purchases["invoice_date"] >= cutoff) & (purchases["invoice_date"] < window_end)
     ]
 
+    # ---- WHO WE ARE ALLOWED TO SCORE ------------------------------------
+    # Only customers we had actually met by the cutoff. A customer whose very
+    # first purchase lands after the cutoff is invisible to us on that day, so
+    # predicting for them is meaningless. Note this comes from `observation`,
+    # not from `purchases`: that single choice is what enforces the rule.
     eligible = pd.Index(observation["customer_id"].unique(), name="customer_id")
 
+    # ---- LABEL 1: how much money, used by the CLV model ------------------
+    # groupby(...).sum()  total spend per customer inside the label window
+    # .reindex(eligible)  force the result to be exactly our eligible list,
+    #                     which INSERTS missing customers as NaN
+    # .fillna(0.0)        a customer who bought nothing spent 0, not "unknown"
+    #
+    # reindex is the important step. Without it, customers who never came back
+    # would simply be absent, and we would silently only score returners,
+    # which is the population that makes any model look brilliant.
     future_spend = (
         future.groupby("customer_id")["line_total"].sum().reindex(eligible).fillna(0.0)
     )
 
+    # ---- LABEL 2: yes/no, used by the repurchase model -------------------
+    # `repurchased` is just "did future_spend exceed zero", as 1/0 rather than
+    # True/False because scikit-learn and xgboost both expect numeric targets.
+    # .to_numpy() drops the pandas index so the columns align positionally
+    # with `eligible` instead of being re-matched by index label.
     labels = pd.DataFrame(
         {
             "customer_id": eligible,
@@ -120,6 +182,9 @@ def make_snapshot(
         }
     )
 
+    # Return the past, the answers, and the date they are separated by, as one
+    # object. Bundling them means no downstream code can accidentally pair the
+    # observation window from one cutoff with the labels from another.
     return Snapshot(
         cutoff=cutoff,
         observation=observation,

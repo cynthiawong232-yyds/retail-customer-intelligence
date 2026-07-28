@@ -63,17 +63,37 @@ def test_returns_are_kept_not_discarded(cleaned):
 
 
 def test_return_features_respect_the_cutoff():
-    """Return features are model inputs, so they obey the same time rule."""
+    """Return features are model inputs, so they obey the same time rule.
+
+    This test uses a FAKE 4-column table, not the real data. That is on
+    purpose: with invented data we know the right answer in advance, so if
+    the assertion fails the function is wrong, not the dataset.
+
+    The scenario: one customer, two returns, on either side of a June cutoff.
+    """
     returns = pd.DataFrame(
         {
             "customer_id": [1, 1],
             "invoice": ["C1", "C2"],
+            #             ^^^^  January: BEFORE the cutoff, so visible
+            #                   ^^^^ December: AFTER, so must be invisible
             "invoice_date": pd.to_datetime(["2011-01-01", "2011-12-01"]),
-            "line_total": [-10.0, -50.0],
+            "line_total": [-10.0, -50.0],   # negative because returns are refunds
         }
     )
+
+    # `feats` is short for "features". Standing on 2011-06-01, what do we know
+    # about this customer's return behaviour?
     feats = return_features(returns, as_of=pd.Timestamp("2011-06-01"))
+
+    # One customer in, one row out.
     assert len(feats) == 1
-    # Only the January return is visible; the December one is in the future.
+
+    # THE POINT OF THE TEST: only the January return is visible. If this said
+    # 2, the function would be leaking December (the future) into a feature,
+    # and every model downstream would be scored on a lie.
     assert feats.loc[0, "n_returns"] == 1
+
+    # £10 from January, and crucially NOT £60. Sign is flipped to positive
+    # because "returned_value" reads more naturally as an amount than a debt.
     assert feats.loc[0, "returned_value"] == 10.0

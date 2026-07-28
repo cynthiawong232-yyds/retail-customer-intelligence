@@ -92,8 +92,24 @@ def test_derive_cutoffs_packs_windows_against_the_end():
 def test_synthetic_leak_is_detected():
     """Sanity-check the harness itself on data with a known answer.
 
-    One customer buys only before the cutoff, one only after, one on both
-    sides. The snapshot must label them 0, (excluded), and 1 respectively.
+    Every other test in this file runs on the real 776k-row dataset, which
+    means a failure could be the data changing rather than the code breaking.
+    This one uses FOUR INVENTED ROWS where the correct answer is obvious by
+    inspection, so a failure can only mean make_snapshot() is wrong.
+
+    Three customers, covering the three cases that exist:
+
+        cutoff = 2011-06-01, window = 90 days (so label window is Jun-Aug)
+
+        customer 1   Jan  ●                      -> seen before cutoff, never
+                          |                         came back = label 0
+        customer 2        |         Jul ●        -> first purchase is AFTER
+                          |                         the cutoff, so on 1 June
+                          |                         we have never heard of
+                          |                         them. Must be EXCLUDED.
+        customer 3   Jan  ●         Jul ●        -> seen before, came back
+                          |                         = label 1, spend 40
+                       cutoff
     """
     rows = [
         # customer 1: buys before only  -> eligible, did NOT repurchase
@@ -109,9 +125,24 @@ def test_synthetic_leak_is_detected():
 
     snap = make_snapshot(df, pd.Timestamp("2011-06-01"), window_days=90)
 
+    # set_index so we can look a customer up by id rather than row position.
     labels = snap.labels.set_index("customer_id")
+
+    # The subtlest rule in the whole project. Customer 2 is a real customer
+    # with a real purchase, but not on 1 June. Including them would add a row
+    # the model cannot possibly get right, and would distort the base rate.
     assert set(labels.index) == {1, 3}, "customer 2 was unseen and must be excluded"
+
+    # Customer 1 was around, and stayed away. Negative example.
     assert labels.loc[1, "repurchased"] == 0
+
+    # Customer 3 was around, and came back. Positive example.
     assert labels.loc[3, "repurchased"] == 1
+
+    # np.isclose rather than == because these are floats, and floating point
+    # arithmetic makes exact equality unreliable (0.1 + 0.2 != 0.3).
+    # Note 40.0, not 70.0: their January purchase is history, not future spend.
     assert np.isclose(labels.loc[3, "future_spend"], 40.0)
+
+    # Zero, not NaN. This is the .fillna(0.0) in make_snapshot doing its job.
     assert np.isclose(labels.loc[1, "future_spend"], 0.0)
