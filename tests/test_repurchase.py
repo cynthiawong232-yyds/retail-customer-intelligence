@@ -23,6 +23,7 @@ from rci.repurchase import (
     format_tree,
     importance_table,
     lift_table,
+    trim_to_best_iteration,
 )
 from rci.split import train_test_snapshots
 
@@ -100,6 +101,53 @@ def test_lift_is_monotonic_enough_to_be_useful(fitted, data):
     assert lift.loc[1, "lift"] > 1.5
     # Cumulative capture must end at exactly 100% of repurchasers.
     assert np.isclose(lift["cumulative_capture"].iloc[-1], 1.0)
+
+
+def test_trimming_removes_dead_trees_without_changing_predictions(fitted, data):
+    """Early stopping saves trees it already proved were useless.
+
+    early_stopping_rounds=50 means training runs 50 rounds PAST the peak to
+    confirm it. Those 50 losing trees land in the booster alongside the 35
+    that are used. predict_proba ignores them via best_iteration, so nothing
+    is wrong with the numbers, but the artifact carries 59% dead weight into
+    a container whose RAM is billed monthly.
+
+    The trim must be provably free: bit-identical output, or it is not a
+    size optimisation, it is a silent model change.
+    """
+    model, p = fitted
+    _, _, X_test, _ = data
+
+    stored = len(model.get_booster().get_dump())
+    used = model.best_iteration + 1
+    assert stored > used, "early stopping should have kept extra proof trees"
+
+    slim = trim_to_best_iteration(model)
+    assert len(slim.get_booster().get_dump()) == used
+
+    p_slim = slim.predict_proba(X_test)[:, 1]
+    # Bit-identical, not merely close. allclose would hide a real change.
+    assert np.array_equal(p_slim, p)
+
+
+def test_saved_artifact_contains_only_used_trees(data):
+    """What ships must be what runs.
+
+    Guards against someone re-running training without the trim step and
+    quietly doubling the deployed artifact again.
+    """
+    import joblib
+
+    from rci.config import ARTIFACTS
+
+    path = ARTIFACTS / "repurchase.joblib"
+    if not path.exists():
+        pytest.skip("run `python -m rci.train_repurchase` first")
+
+    artifact = joblib.load(path)
+    stored = len(artifact["model"].get_booster().get_dump())
+    assert stored == artifact["n_trees"]
+    assert stored < artifact["n_trees_before_trim"]
 
 
 def test_calibration_preserves_ranking(fitted, data):

@@ -26,6 +26,7 @@ from rci.repurchase import (
     importance_table,
     lift_table,
     shap_contributions,
+    trim_to_best_iteration,
 )
 from rci.split import train_test_snapshots
 
@@ -160,12 +161,32 @@ def main() -> None:
         print(f"    {feat:<26} = {X_test.loc[cid, feat]:>10,.1f}   "
               f"{direction} score by {abs(val):.3f} log-odds")
 
+    # ---- trim before saving ---------------------------------------------
+    # Early stopping kept 50 extra trees as proof the peak was real. They are
+    # never consulted at prediction time, but they would still be shipped to
+    # a container whose RAM is billed. Drop them.
+    n_stored = len(model.get_booster().get_dump())
+    slim = trim_to_best_iteration(model)
+    n_slim = len(slim.get_booster().get_dump())
+    p_slim = slim.predict_proba(X_test)[:, 1]
+
+    print("\n\nTRIMMING THE MODEL BEFORE IT SHIPS")
+    print("=" * 78)
+    print(f"  trees stored after training : {n_stored}")
+    print(f"  trees actually used         : {n_slim}   (best_iteration + 1)")
+    print(f"  dead weight removed         : {n_stored - n_slim} trees "
+          f"({100 * (n_stored - n_slim) / n_stored:.0f}%)")
+    print(f"  max prediction change       : {np.abs(p_slim - p_test).max():.10f}")
+    print("\n  early_stopping_rounds=50 means training continues 50 rounds PAST")
+    print("  the peak to prove it was real. Those losing trees get saved too.")
+
     # ---- save -------------------------------------------------------------
     artifact = {
-        "model": model,
+        "model": slim,
         "feature_columns": FEATURE_COLUMNS,
         "trained_on_cutoff": str(train.cutoff.date()),
-        "n_trees": int(model.best_iteration + 1),
+        "n_trees": n_slim,
+        "n_trees_before_trim": n_stored,
         "metrics_on_test": results["xgboost"],
         "test_cutoff": str(test.cutoff.date()),
         "shap_base_value": base_value,
