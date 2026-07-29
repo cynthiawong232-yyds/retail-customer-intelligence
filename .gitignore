@@ -5,7 +5,7 @@ data/processed/
 
 # Trained model artifacts.
 #
-# These ARE committed, deliberately, because the whole bundle is 65 KB and
+# These ARE committed, deliberately, because the serving bundle is 1.87 MB and
 # the deployed container needs it at build time. For a bigger model the right
 # answer is a model registry or object storage, and git would be the wrong
 # place. At this size, committing keeps deployment to one command and lets
@@ -26,3 +26,12 @@ __pycache__/
 .venv/
 venv/
 .env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+# Vite inlines VITE_* vars into the shipped bundle, so .env.local is a build
+# input rather than a runtime secret store. Ignored anyway: the API URL differs
+# per machine, and nothing that ends up in a public bundle belongs in git.
+frontend/.env.local
+frontend/.env.*.local

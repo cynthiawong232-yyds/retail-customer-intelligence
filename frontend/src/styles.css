@@ -1,0 +1,188 @@
+/* Deliberately hand-written and small. No Tailwind, no component library:
+   this is a demo for four models, and a build step nobody needs is a build
+   step that breaks later. */
+
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --line: #262b35;
+  --text: #e6e8ec;
+  --muted: #949aa6;
+  --accent: #5b9dff;
+  --up: #4ade80;
+  --down: #f87171;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f7f8fa;
+    --panel: #ffffff;
+    --line: #e3e6eb;
+    --text: #1a1d23;
+    --muted: #667085;
+    --accent: #2563eb;
+    --up: #16a34a;
+    --down: #dc2626;
+    color-scheme: light;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 40px 20px 80px; }
+
+h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.01em; }
+h2 { font-size: 15px; margin: 0; letter-spacing: 0.02em; }
+h3 { font-size: 13px; margin: 18px 0 8px; color: var(--muted); font-weight: 600; }
+
+.sub { color: var(--muted); font-size: 13px; margin: 4px 0; }
+.lede { max-width: 62ch; margin-bottom: 22px; }
+.muted { color: var(--muted); font-size: 13px; }
+.error { color: var(--down); }
+
+code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  background: var(--panel);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* picker ---------------------------------------------------------- */
+
+.picker { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; flex-wrap: wrap; }
+.picker label { font-size: 13px; color: var(--muted); }
+
+select {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 13px;
+  min-width: 340px;
+  max-width: 100%;
+}
+
+/* layout ---------------------------------------------------------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px 20px 20px;
+}
+
+.panel header { border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 14px; }
+
+.headline { font-size: 30px; font-weight: 650; margin: 0; letter-spacing: -0.02em; }
+
+/* key/value ------------------------------------------------------- */
+
+.kv {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px 14px;
+  margin: 14px 0 0;
+  font-size: 13px;
+}
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* bar ------------------------------------------------------------- */
+
+.bar {
+  height: 6px;
+  background: var(--line);
+  border-radius: 99px;
+  overflow: hidden;
+  margin: 14px 0 8px;
+}
+.bar-fill { height: 100%; background: var(--accent); border-radius: 99px; }
+
+/* shap drivers ---------------------------------------------------- */
+
+.drivers { list-style: none; padding: 0; margin: 0; font-size: 13px; }
+.drivers li {
+  display: grid;
+  grid-template-columns: 16px 1fr auto auto;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.drivers li:last-child { border-bottom: 0; }
+.up { color: var(--up); }
+.down { color: var(--down); }
+.feat { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.val, .eff { color: var(--muted); }
+
+/* recommendations ------------------------------------------------- */
+
+.recs { margin: 12px 0 0; padding-left: 22px; font-size: 13px; }
+.recs li { padding: 3px 0; }
+
+.link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.link:hover { text-decoration: underline; }
+
+.tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: 99px;
+  margin-left: 8px;
+  vertical-align: 1px;
+}
+.tag.reorder { background: var(--line); color: var(--muted); }
+.tag.new { background: var(--accent); color: #fff; }
+
+/* similar --------------------------------------------------------- */
+
+.similar { list-style: none; padding: 0; margin: 12px 0 0; font-size: 13px; }
+.similar li {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+}
+.similar li:last-child { border-bottom: 0; }
+.sim { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+/* caveat ---------------------------------------------------------- */
+
+.caveat {
+  margin: 16px 0 0;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+footer { margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--line); }
+footer .sub { max-width: 74ch; }

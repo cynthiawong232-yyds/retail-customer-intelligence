@@ -20,7 +20,21 @@ RUN pip install --no-cache-dir -r requirements-serve.txt
 # Note what is NOT installed: pandas, scikit-learn's full stack, shap, gensim.
 # Those are training-time only. requirements-serve.txt is the boundary.
 COPY src/ ./src/
-COPY artifacts/ ./artifacts/
+
+# Artifacts are listed ONE BY ONE rather than `COPY artifacts/`. Two of them,
+# clv.joblib and recommend.joblib, are training records: they hold the full
+# model comparison, the untrimmed boosters and the item vectors used for
+# evaluation. The API never opens either, and copying the directory wholesale
+# shipped 2.6MB of dead weight. Naming each file also means a future artifact
+# has to be added here deliberately, instead of silently riding along.
+COPY artifacts/segmentation.joblib \
+     artifacts/customers.npz \
+     artifacts/repurchase.joblib \
+     artifacts/shap_test.npz \
+     artifacts/clv_serve.joblib \
+     artifacts/clv_test.npz \
+     artifacts/recommend_serve.npz \
+     ./artifacts/
 
 ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1
