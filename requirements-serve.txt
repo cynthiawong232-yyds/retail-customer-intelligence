@@ -5,7 +5,14 @@
 # is money spent on nothing.
 #
 # Excluded on purpose:
-#   scikit-learn  - only the fitted KMeans centroids are needed, saved as .npy
+#   scikit-learn  - only the fitted KMeans centroids and the scaler's mean and
+#                   scale are needed, and they ship as an .npz of 18 floats.
+#                   This was ASPIRATIONAL until the container was actually
+#                   tested: the API used to joblib.load a pickled KMeans,
+#                   which needs sklearn importable and crashed at startup
+#                   with ModuleNotFoundError. Fixed in export_serving.py,
+#                   which now asserts the numpy path matches sklearn exactly
+#                   before writing the numbers.
 #   shap          - explanations are precomputed offline into a parquet file
 #   gensim        - only trains the embeddings; serving reads the saved .npy
 #   pandas        - not needed if artifacts are loaded as numpy arrays

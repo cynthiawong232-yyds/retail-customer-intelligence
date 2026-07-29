@@ -56,14 +56,19 @@ async def lifespan(app: FastAPI):
     time also works but makes the module impossible to import in tests
     without the artifacts present.
     """
-    bundle = joblib.load(ARTIFACTS / "segmentation.joblib")
+    # Segmentation ships as plain numbers, NOT as a pickled sklearn estimator.
+    # Unpickling a KMeans requires scikit-learn to be importable, and this
+    # container has no scikit-learn on purpose. What was learned is 18 floats:
+    # four centroids and the scaler's mean and scale. See export_serving.py.
+    seg = np.load(ARTIFACTS / "segmentation.npz", allow_pickle=False)
     customers = np.load(ARTIFACTS / "customers.npz", allow_pickle=False)
 
-    STATE["kmeans"] = bundle["kmeans"]
-    STATE["scaler"] = bundle["scaler"]
-    STATE["names"] = bundle["segment_names"]
-    STATE["feature_columns"] = bundle["feature_columns"]
-    STATE["trained_on"] = bundle["trained_on_cutoff"]
+    STATE["centroids"] = seg["centroids"]
+    STATE["scaler_mean"] = seg["scaler_mean"]
+    STATE["scaler_scale"] = seg["scaler_scale"]
+    STATE["names"] = {i: str(n) for i, n in enumerate(seg["segment_names"])}
+    STATE["feature_columns"] = [str(c) for c in seg["feature_columns"]]
+    STATE["trained_on"] = str(seg["trained_on_cutoff"])
 
     # The repurchase model. Loaded once, like everything else.
     rep = joblib.load(ARTIFACTS / "repurchase.joblib")
@@ -188,20 +193,26 @@ def _segment(recency: float, frequency: float, monetary: float) -> SegmentRespon
     # features by POSITION, not name, so a reordering here would silently
     # produce wrong answers rather than an error. feature_columns is carried
     # in the artifact for this reason.
-    raw = np.array([[recency, frequency, monetary]], dtype=np.float64)
+    raw = np.array([recency, frequency, monetary], dtype=np.float64)
 
     # Same two transforms as training, in the same order: log the skew away,
-    # then apply the TRAINING scaler.
+    # then apply the TRAINING statistics. StandardScaler.transform IS this
+    # subtraction and division; writing it out removes the scikit-learn
+    # dependency without changing a single output. export_serving.py asserts
+    # the two agree on every customer before shipping the numbers.
     logged = np.log1p(raw)
-    scaled = STATE["scaler"].transform(logged)
+    scaled = (logged - STATE["scaler_mean"]) / STATE["scaler_scale"]
 
-    segment_id = int(STATE["kmeans"].predict(scaled)[0])
+    # KMeans.predict IS "which centroid is nearest". Squared distance is
+    # enough to pick the winner, since sqrt is monotonic.
+    deltas = STATE["centroids"] - scaled
+    sq = np.einsum("ij,ij->i", deltas, deltas)
+    segment_id = int(np.argmin(sq))
 
     # Distance to the assigned centroid is a cheap, honest confidence signal.
     # A customer sitting far from every centroid is one the model is not
     # really sure about, and saying so is better than a bare label.
-    centroid = STATE["kmeans"].cluster_centers_[segment_id]
-    distance = float(np.linalg.norm(scaled[0] - centroid))
+    distance = float(np.sqrt(sq[segment_id]))
 
     name = STATE["names"][segment_id]
     guidance = {

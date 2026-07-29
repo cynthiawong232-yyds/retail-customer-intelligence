@@ -27,7 +27,7 @@ COPY src/ ./src/
 # evaluation. The API never opens either, and copying the directory wholesale
 # shipped 2.6MB of dead weight. Naming each file also means a future artifact
 # has to be added here deliberately, instead of silently riding along.
-COPY artifacts/segmentation.joblib \
+COPY artifacts/segmentation.npz \
      artifacts/customers.npz \
      artifacts/repurchase.joblib \
      artifacts/shap_test.npz \
