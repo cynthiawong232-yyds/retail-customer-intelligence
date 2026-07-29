@@ -2,14 +2,14 @@
 
 Four customer models on **real** transaction data, trained with a temporal split and served behind an API.
 
-> Work in progress. Phase 1 of 5 complete.
+> Work in progress. Segmentation and repurchase prediction complete and served.
 
 **Data:** [UCI Online Retail II](https://archive.ics.uci.edu/dataset/502/online+retail+ii), CC BY 4.0. 1,067,371 real transactions from a UK online gift wholesaler, Dec 2009 to Dec 2011. Downloaded at runtime, never committed. **No synthetic data anywhere in this repo.**
 
 | | status |
 |---|---|
 | Segmentation (KMeans) | done, served at `/segment` |
-| Repurchase prediction (XGBoost) | next |
+| Repurchase prediction (XGBoost) | done, served at `/predict/repurchase/{id}` |
 | CLV (BG/NBD + Gamma-Gamma vs XGBoost) | planned |
 | Recommendations (item2vec + XGBoost ranker) | planned |
 
@@ -73,6 +73,25 @@ A random split would put Nov-2011 rows in training and Jan-2010 rows in test, le
 
 `1+5+5` and `5+4+2` both make 11, and the total forgets which dimension contributed. Scores 9-13 cover 38% of the base and every one contains 3 distinct segments. The rule is accurate at the extremes and blind in the middle, which is where the winnable money is.
 
+**XGBoost beat logistic regression by 2%, and that is the finding.**
+
+```
+                     vs base  pr_auc  roc_auc   brier
+recency rule            1.58  0.6855   0.7623     NaN
+logistic regression     1.74  0.7580   0.7891  0.2007
+xgboost                 1.78  0.7742   0.7986  0.1976
+
+base rate (a useless model's PR-AUC floor): 0.4351
+```
+
+The large jump is rule to linear model, not linear model to gradient boosting. Most of the signal here is linear in the engineered features, so **the feature engineering did more work than the algorithm**. PR-AUC is the headline rather than ROC-AUC because ROC-AUC flatters imbalanced problems, and PR-AUC's floor is the base rate rather than 0.5.
+
+Business view, which is the number worth quoting: **the top decile repurchases at 93.3% against a 43.5% average, 2.15x lift.** The top three deciles capture 53% of all repurchasers.
+
+**The seasonality predicted in Phase 0 showed up exactly as expected.** Mean predicted probability 0.309 against an actual rate of 0.435: the model learned a summer world and is scoring an autumn one. Isotonic recalibration, fitted on half the new period and scored on the other half, moves mean prediction to 0.435 and improves Brier from 0.2000 to 0.1816 while leaving ROC-AUC at 0.793. Isotonic is monotonic, so it rescales without reordering. **Ranking and calibration are separate problems.**
+
+**Gain and SHAP rank features differently, and both are right.** `recency` is 5th by gain (8.4%) and 1st by SHAP. It was split on 172 times, more than any feature, each split deciding little. Gain answers "what did the model rely on to build itself"; SHAP answers "what moves this customer's prediction". The second is what you show a stakeholder.
+
 **The segments:**
 
 | | customers | % base | % revenue | median spend | median recency |
@@ -91,11 +110,14 @@ k=4 was chosen from the inertia elbow and a local silhouette peak. Silhouette te
 FastAPI, containerised, ~65 KB of artifacts.
 
 ```
-GET  /health              both dates: model trained on, features as of
-POST /segment             three numbers in, a named segment out
-GET  /customers/{id}      one of the 5,256 real customers
-GET  /customers           paged listing
+GET  /health                          both dates, plus both models' metrics
+POST /segment                         three numbers in, a named segment out
+GET  /customers/{id}                  one of the 5,256 real customers
+GET  /customers                       paged listing
+GET  /predict/repurchase/{id}         probability, decile, and SHAP drivers
 ```
+
+Every repurchase response carries its own calibration caveat, because the model under-predicts on this period and an uncalibrated probability multiplied by a budget is how a number does damage.
 
 Deliberate choices:
 
@@ -117,9 +139,10 @@ src/rci/
   split.py          the temporal split. the most important file here
   features.py       transactions -> one row per customer
   segmentation.py   KMeans, and the quintile rule reimplemented for comparison
+  repurchase.py     XGBoost, baselines, metrics, calibration, tree printer
   explain.py        prints a real customer's timeline across the cutoff
   api.py            FastAPI serving layer
-tests/              45 tests, leakage checks first
+tests/              60 tests, leakage checks first
 ```
 
 ## Data notes

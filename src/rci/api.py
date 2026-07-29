@@ -65,6 +65,19 @@ async def lifespan(app: FastAPI):
     STATE["feature_columns"] = bundle["feature_columns"]
     STATE["trained_on"] = bundle["trained_on_cutoff"]
 
+    # The repurchase model. Loaded once, like everything else.
+    rep = joblib.load(ARTIFACTS / "repurchase.joblib")
+    STATE["repurchase_model"] = rep["model"]
+    STATE["repurchase_columns"] = list(rep["feature_columns"])
+    STATE["repurchase_metrics"] = rep["metrics_on_test"]
+    STATE["repurchase_n_trees"] = rep["n_trees"]
+    # Precomputed SHAP, so the container never imports the shap library.
+    shap_file = np.load(ARTIFACTS / "shap_test.npz", allow_pickle=False)
+    STATE["shap_values"] = shap_file["shap_values"]
+    STATE["shap_base"] = float(shap_file["base_value"])
+    STATE["shap_ids"] = {int(c): i for i, c in enumerate(shap_file["customer_ids"])}
+    STATE["customer_features"] = customers["features"]
+
     ids = customers["customer_ids"]
     STATE["customer_ids"] = ids
     STATE["customer_rfm"] = customers["rfm"]
@@ -178,11 +191,21 @@ def _segment(recency: float, frequency: float, monetary: float) -> SegmentRespon
 @app.get("/health")
 def health() -> dict:
     """Liveness check. Railway and Vercel both poll something like this."""
+    metrics = STATE.get("repurchase_metrics", {})
     return {
         "status": "ok",
         "model_trained_on_cutoff": STATE.get("trained_on"),
         "customer_features_as_of": STATE.get("features_as_of"),
         "customers_loaded": len(STATE.get("customer_ids", [])),
+        "models": {
+            "segmentation": {"algorithm": "KMeans", "k": 4},
+            "repurchase": {
+                "algorithm": "XGBoost",
+                "trees": STATE.get("repurchase_n_trees"),
+                "pr_auc": round(metrics.get("pr_auc", 0), 4),
+                "base_rate": round(metrics.get("base_rate", 0), 4),
+            },
+        },
     }
 
 
@@ -203,6 +226,76 @@ def segment_known_customer(customer_id: int) -> SegmentResponse:
         )
     r, f, m = STATE["customer_rfm"][idx]
     return _segment(float(r), float(f), float(m))
+
+
+class RepurchaseResponse(BaseModel):
+    customer_id: int
+    probability: float
+    decile: int
+    reading: str
+    top_drivers: list[dict]
+    caveat: str
+
+
+@app.get("/predict/repurchase/{customer_id}", response_model=RepurchaseResponse)
+def predict_repurchase(customer_id: int) -> RepurchaseResponse:
+    """Probability this customer buys again in the next 90 days, explained."""
+    idx = STATE["id_index"].get(customer_id)
+    if idx is None:
+        raise HTTPException(404, f"customer {customer_id} not in the dataset")
+
+    # reshape(1, -1) because the model expects a 2-D matrix of rows, and a
+    # single customer is a matrix with one row, not a 1-D vector.
+    row = STATE["customer_features"][idx].reshape(1, -1).astype(np.float32)
+    prob = float(STATE["repurchase_model"].predict_proba(row)[0, 1])
+
+    # Which tenth of the customer base this score falls in. Deciles are what
+    # a campaign is actually targeted by ("contact the top two deciles"),
+    # so it is more directly usable than the raw probability.
+    all_rows = STATE["customer_features"].astype(np.float32)
+    if "all_probs" not in STATE:
+        STATE["all_probs"] = STATE["repurchase_model"].predict_proba(all_rows)[:, 1]
+    decile = int(1 + (STATE["all_probs"] > prob).sum() * 10 // len(STATE["all_probs"]))
+
+    # Precomputed SHAP: per-customer contributions in log-odds, positive
+    # meaning "pushed the score up". Shipped as data so the container never
+    # imports shap, which would cost RAM that Railway bills for.
+    drivers: list[dict] = []
+    sidx = STATE["shap_ids"].get(customer_id)
+    if sidx is not None:
+        values = STATE["shap_values"][sidx]
+        order = np.argsort(-np.abs(values))[:5]
+        cols = STATE["repurchase_columns"]
+        drivers = [
+            {
+                "feature": cols[i],
+                "value": None if np.isnan(row[0, i]) else round(float(row[0, i]), 2),
+                "effect_log_odds": round(float(values[i]), 4),
+                "direction": "raises" if values[i] > 0 else "lowers",
+            }
+            for i in order
+        ]
+
+    return RepurchaseResponse(
+        customer_id=customer_id,
+        probability=round(prob, 4),
+        decile=min(decile, 10),
+        reading=(
+            f"{prob:.0%} chance of purchasing within 90 days of "
+            f"{STATE['features_as_of']}."
+        ),
+        top_drivers=drivers,
+        # Stated in every response on purpose. The model was fitted on a
+        # summer window (32.3% base rate) and is scoring an autumn one
+        # (43.5%), so it systematically UNDER-states probabilities. The
+        # ordering is sound; the absolute number is not, until recalibrated.
+        caveat=(
+            "Probabilities are uncalibrated for this period: the model was "
+            "trained on a 32.3% base-rate window and applied to a 43.5% one "
+            "(Christmas seasonality), so absolute values run low. Ranking and "
+            "decile are unaffected."
+        ),
+    )
 
 
 @app.get("/customers")

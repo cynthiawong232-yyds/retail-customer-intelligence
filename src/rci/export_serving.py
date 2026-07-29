@@ -28,7 +28,7 @@ import numpy as np
 
 from rci.clean import build
 from rci.config import ARTIFACTS
-from rci.features import RFM_COLUMNS, build_features
+from rci.features import FEATURE_COLUMNS, RFM_COLUMNS, build_features
 from rci.split import train_test_snapshots
 
 
@@ -43,6 +43,10 @@ def main() -> None:
 
     ids = X.index.to_numpy(dtype=np.int64)
     rfm = X[RFM_COLUMNS].to_numpy(dtype=np.float32)
+    # The full 13-column matrix too, because the repurchase model needs all of
+    # them. NaN survives the round-trip intact, which matters: XGBoost treats
+    # missing as its own branch direction rather than something to fill in.
+    full = X[FEATURE_COLUMNS].to_numpy(dtype=np.float32)
 
     # float32 rather than float64 halves the memory for no meaningful loss:
     # nobody needs 15 significant figures on "days since last purchase".
@@ -57,6 +61,8 @@ def main() -> None:
         customer_ids=ids,
         rfm=rfm,
         columns=np.array(RFM_COLUMNS),
+        features=full,
+        feature_columns=np.array(FEATURE_COLUMNS),
         as_of=np.array(str(test.cutoff.date())),
     )
 
