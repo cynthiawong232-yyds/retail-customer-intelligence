@@ -24,10 +24,10 @@ Start with ONE decision tree. A tree is nested yes/no questions:
    predict     predict
     low         medium
 
-Cindy has already written a hand-made version of this: the RFM quintile rule
-scores each dimension 1-5 using thresholds a human picked. XGBoost differs in
-two ways. It LEARNS the thresholds from data, and it does not stop at one
-tree.
+The hand-made version of this is the RFM quintile rule, which scores each
+dimension 1-5 using thresholds a human picked (see `segmentation.py`, where it
+is implemented for comparison). XGBoost differs in two ways. It LEARNS the
+thresholds from data, and it does not stop at one tree.
 
 BOOSTING, the actual idea:
 

@@ -207,9 +207,9 @@ def name_segments(prof: pd.DataFrame) -> dict[int, str]:
 
 
 def quintile_segments(X: pd.DataFrame) -> pd.Series:
-    """The rule-based RFM scoring Cindy already wrote, reimplemented.
+    """The classic rule-based RFM scoring, reimplemented here for comparison.
 
-    This is the approach in porfolio_projects/client_advisor_intelligence_agent
+    The version almost every analytics team writes at some point
     (`recency_score`, `frequency_score`, `monetary_score`, `rfm_total_score`):
     cut each dimension into 5 equal-sized buckets, score 1 to 5, add them up.
 

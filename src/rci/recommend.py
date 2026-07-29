@@ -47,7 +47,7 @@ one substitution.
 Products that keep turning up in the same baskets end up close together. No
 one tells the model what a product IS; it infers similarity purely from
 co-occurrence. That is the entire idea, and it is why the same technique works
-for words, products, songs, and DropPost's content categories.
+for words, products, songs, and anything else that appears in groups.
 
 WHAT THE DATA SAID BEFORE ANY MODELLING
 ---------------------------------------

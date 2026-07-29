@@ -9,8 +9,8 @@ A model in a notebook is a claim. A model behind a URL is a product. Most
 data science portfolios stop at the notebook, which is exactly the gap this
 project exists to close.
 
-Same stack as DropPost's backend: FastAPI on Railway. So this file should
-cost setup time, not learning time.
+FastAPI on Railway, containerised. A boring, widely-used stack on purpose:
+the interesting part of this repo is upstream of here.
 
 THE TWO RULES OF SERVING
 ------------------------
@@ -136,9 +136,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# The frontend will be served from a different origin (Vercel) than the API
-# (Railway), and browsers block that by default. This is the same CORS setup
-# DropPost needs for exactly the same reason.
+# The frontend is served from a different origin (Vercel) than the API
+# (Railway), and browsers block cross-origin requests by default. Any split
+# frontend/backend deploy needs this, which is most of them.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],   # a public read-only demo; tighten if it ever writes
