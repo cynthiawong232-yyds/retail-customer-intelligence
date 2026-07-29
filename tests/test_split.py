@@ -73,6 +73,25 @@ def test_snapshots_are_out_of_time(snapshots):
     assert (test.cutoff - train.cutoff).days == PREDICTION_WINDOW_DAYS
 
 
+def test_train_population_is_a_subset_of_test_population(snapshots):
+    """A temporal split photographs the base twice; it does not cut it in two.
+
+    Anyone who existed at the June cutoff also existed at the September one,
+    because nobody un-becomes a customer. So train MUST be a strict subset of
+    test, and the two sizes must NOT sum to the total customer count.
+
+    If this ever fails, the snapshots are being built from different
+    populations and the out-of-time comparison is meaningless.
+    """
+    train, test = snapshots
+    tr = set(train.labels["customer_id"])
+    te = set(test.labels["customer_id"])
+    assert tr <= te, "a train customer vanished from the later snapshot"
+    # The later snapshot must have picked up genuinely new customers, or the
+    # two cutoffs are not far enough apart to be measuring anything.
+    assert len(te - tr) > 0
+
+
 def test_train_label_window_does_not_reach_into_test_labels(snapshots):
     """The two label windows must not overlap, or the same purchase would
     count as evidence twice."""
