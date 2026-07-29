@@ -78,6 +78,24 @@ async def lifespan(app: FastAPI):
     STATE["shap_ids"] = {int(c): i for i, c in enumerate(shap_file["customer_ids"])}
     STATE["customer_features"] = customers["features"]
 
+    # The CLV pair, shipped two different ways on purpose.
+    # The hurdle boosters run LIVE (xgboost is already imported above, so they
+    # are nearly free). BG/NBD arrives PRECOMPUTED, because running it would
+    # require `lifetimes` and scipy.special in a container whose RAM is billed.
+    clv = joblib.load(ARTIFACTS / "clv_serve.joblib")
+    STATE["clv_clf"] = clv["hurdle_clf"]
+    STATE["clv_reg"] = clv["hurdle_reg"]
+    STATE["clv_metrics"] = clv["metrics_on_test"]
+    STATE["clv_window"] = clv["window_days"]
+
+    clv_file = np.load(ARTIFACTS / "clv_test.npz", allow_pickle=False)
+    STATE["clv_bgnbd"] = clv_file["bgnbd"]
+    STATE["clv_alive"] = clv_file["p_alive"]
+    STATE["clv_ids"] = {int(c): i for i, c in enumerate(clv_file["customer_ids"])}
+    # Sorted once at startup so a decile lookup is a binary search rather than
+    # a full comparison against 5,256 values on every request.
+    STATE["clv_sorted"] = np.sort(clv_file["bgnbd"])
+
     ids = customers["customer_ids"]
     STATE["customer_ids"] = ids
     STATE["customer_rfm"] = customers["rfm"]
@@ -205,6 +223,16 @@ def health() -> dict:
                 "pr_auc": round(metrics.get("pr_auc", 0), 4),
                 "base_rate": round(metrics.get("base_rate", 0), 4),
             },
+            # Reported as a comparison, not a single winner, because the
+            # winner is the unfashionable one and that is the finding.
+            "clv": {
+                "algorithm": "BG/NBD + Gamma-Gamma (served), XGBoost hurdle (challenger)",
+                "window_days": STATE.get("clv_window"),
+                "mae": {
+                    name: round(m["MAE"], 1)
+                    for name, m in STATE.get("clv_metrics", {}).items()
+                },
+            },
         },
     }
 
@@ -294,6 +322,81 @@ def predict_repurchase(customer_id: int) -> RepurchaseResponse:
             "trained on a 32.3% base-rate window and applied to a 43.5% one "
             "(Christmas seasonality), so absolute values run low. Ranking and "
             "decile are unaffected."
+        ),
+    )
+
+
+class CLVResponse(BaseModel):
+    customer_id: int
+    expected_spend_90d: float
+    p_still_alive: float
+    value_decile: int
+    challenger: dict
+    reading: str
+    caveat: str
+
+
+@app.get("/predict/clv/{customer_id}", response_model=CLVResponse)
+def predict_clv(customer_id: int) -> CLVResponse:
+    """Expected spend over the next 90 days, from two different models.
+
+    Repurchase answers WHETHER someone returns. This answers WHAT THAT IS
+    WORTH, which is the number a retention budget is actually built from: an
+    80% chance of GBP 40 and a 30% chance of GBP 4,000 are opposite decisions,
+    and only the pound figure separates them.
+
+    Both models are returned side by side rather than one being quietly
+    picked, because the honest result is that the 2005 probabilistic model
+    beat gradient boosting on this dataset. Hiding that would waste the most
+    interesting thing the project found.
+    """
+    cidx = STATE["clv_ids"].get(customer_id)
+    idx = STATE["id_index"].get(customer_id)
+    if cidx is None or idx is None:
+        raise HTTPException(404, f"customer {customer_id} not in the dataset")
+
+    # --- the served model: BG/NBD x Gamma-Gamma, precomputed -------------
+    expected = float(STATE["clv_bgnbd"][cidx])
+    alive = float(STATE["clv_alive"][cidx])
+
+    # Value decile across the whole customer base. searchsorted on a
+    # pre-sorted array is O(log n); decile 1 is the most valuable tenth.
+    n = len(STATE["clv_sorted"])
+    rank_from_top = n - int(np.searchsorted(STATE["clv_sorted"], expected, side="left"))
+    value_decile = min(10, max(1, 1 + (rank_from_top - 1) * 10 // n))
+
+    # --- the challenger: XGBoost hurdle, run live ------------------------
+    # Two boosters, exactly as trained: P(spends anything) x E[spend | spends].
+    # expm1 inverts the log target the regressor was fitted on.
+    row = STATE["customer_features"][idx].reshape(1, -1).astype(np.float32)
+    p_buy = float(STATE["clv_clf"].predict_proba(row)[0, 1])
+    amount = float(np.expm1(STATE["clv_reg"].predict(row)[0]))
+    hurdle = max(0.0, p_buy * amount)
+
+    return CLVResponse(
+        customer_id=customer_id,
+        expected_spend_90d=round(expected, 2),
+        p_still_alive=round(alive, 4),
+        value_decile=value_decile,
+        challenger={
+            "model": "XGBoost hurdle",
+            "p_buys_at_all": round(p_buy, 4),
+            "expected_amount_if_they_buy": round(amount, 2),
+            "estimate": round(hurdle, 2),
+        },
+        reading=(
+            f"Expected to spend GBP {expected:,.0f} in the 90 days after "
+            f"{STATE['features_as_of']}, with a {alive:.1%} chance of still "
+            f"being an active customer at all. Value decile {value_decile} of 10 "
+            f"(1 = most valuable). This figure is the CEILING on retention "
+            f"spend before margin, not a profit number."
+        ),
+        caveat=(
+            "BG/NBD is precomputed, so this endpoint scores only customers "
+            "known at export time. It also cannot score customers with no "
+            "repeat history (7.9% of the base); those are filled with the "
+            "median for their group, never with zero. The XGBoost challenger "
+            "has no such gap but was less accurate here (MAE 429 vs 389)."
         ),
     )
 

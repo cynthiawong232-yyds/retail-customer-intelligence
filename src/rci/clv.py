@@ -134,12 +134,48 @@ def repeat_order_value(observation: pd.DataFrame) -> pd.Series:
     return repeats.groupby("customer_id")["value"].mean()
 
 
-def fit_bgnbd_gg(X: pd.DataFrame, observation: pd.DataFrame, penalizer: float = 0.01):
+def fit_bgnbd_gg(
+    X: pd.DataFrame,
+    observation: pd.DataFrame,
+    penalizer: float = 0.01,
+    gg_penalizer: float = 0.0,
+):
     """Fit both halves. Returns (bgf, ggf, monetary) ready for prediction.
 
-    `penalizer` is L2 regularisation on the fitted parameters. Without it
-    these likelihoods can wander to extreme values on customers with sparse
-    histories; 0.01 is the conventional small nudge toward sanity.
+    TWO DIFFERENT PENALIZERS, AND THE REASON IS A REAL BUG THIS CODE ONCE HAD
+    ---------------------------------------------------------------------
+    `penalizer` is L2 regularisation on the fitted parameters. For BG/NBD it
+    does what regularisation is supposed to do: r, alpha, a, b are all small
+    dimensionless numbers, and 0.01 keeps sparse-history customers from
+    dragging the likelihood somewhere silly.
+
+    For Gamma-Gamma the SAME value silently destroys the model, because
+    lifetimes penalises the RAW parameter values and Gamma-Gamma's `v` lives
+    on the scale of MONEY. Fitted on this data, v = 544. An L2 term pulls it
+    toward zero, and the optimiser compensates by collapsing q:
+
+        penalizer   p        q        v        population mean
+        0.0         1.896    3.820    544.11        366     <- healthy
+        0.001      11.172    0.895     11.33     -1,205
+        0.01        3.788    0.349      3.69        -21     <- what we shipped
+        0.1         1.029    0.182      0.94         -1
+
+    Gamma-Gamma's mean is v*p/(q-1), so it EXISTS ONLY IF q > 1. Below that
+    the underlying gamma has infinite mean and lifetimes returns a negative
+    number rather than raising. The consequence was negative predicted spend
+    for all 1,575 never-repeated customers (30% of the base), because they
+    get zero individual weight and therefore receive the population mean
+    unmodified.
+
+    MAE never noticed: -21 is close to the true value for people who mostly
+    spend 0, so the aggregate metric looked fine while the model was
+    returning negative money. `tests/test_clv.py` asserts non-negativity for
+    exactly this reason, and that assertion is what found it.
+
+    Unregularised is the correct answer here, not a workaround: the healthy
+    fit reproduces the empirical mean repeat order value (366 vs 376) almost
+    exactly. The general lesson is that a regularisation strength copied from
+    a tutorial is only meaningful on the scale the tutorial's data had.
     """
     from lifetimes import BetaGeoFitter, GammaGammaFitter
 
@@ -153,8 +189,18 @@ def fit_bgnbd_gg(X: pd.DataFrame, observation: pd.DataFrame, penalizer: float = 
     monetary = repeat_order_value(observation).reindex(X.index)
     mask = (bg["frequency"] > 0) & monetary.notna() & (monetary > 0)
 
-    ggf = GammaGammaFitter(penalizer_coef=penalizer)
+    ggf = GammaGammaFitter(penalizer_coef=gg_penalizer)
     ggf.fit(bg.loc[mask, "frequency"], monetary[mask])
+
+    # A guard, not a hope. If a future data revision pushes q back under 1,
+    # this must fail loudly instead of quietly emitting negative money again.
+    q = float(ggf.params_["q"])
+    if q <= 1:
+        raise ValueError(
+            f"Gamma-Gamma fitted q={q:.4f} <= 1, so its mean does not exist "
+            "and expected order value will come back negative. Lower "
+            "gg_penalizer or check the repeat-order-value distribution."
+        )
     return bgf, ggf, monetary
 
 
@@ -203,11 +249,21 @@ def predict_bgnbd_gg(bgf, ggf, X: pd.DataFrame, monetary: pd.Series, days: int =
     # average TOWARD THE POPULATION MEAN, weighted by how many orders back it
     # up. Someone with 40 orders is trusted; someone with 2 is pulled toward
     # the crowd. That shrinkage is the whole point of using it over a raw
-    # average.
+    # average. Concretely, with p=1.896 and q=3.820:
+    #
+    #     weight = p*x / (p*x + q - 1)
+    #     1 repeat order  -> 0.40 own average, 0.60 population mean
+    #     5 repeat orders -> 0.77 own average, 0.23 population mean
+    #    40 repeat orders -> 0.96 own average, 0.04 population mean
+    #
+    # Note the weight formula needs q > 1 to behave; see fit_bgnbd_gg for the
+    # bug that happens when it does not.
     m = monetary.fillna(monetary.median())
-    value = ggf.conditional_expected_average_profit(bg["frequency"], m)
+    value = np.asarray(
+        ggf.conditional_expected_average_profit(bg["frequency"], m), dtype=float
+    )
 
-    return n_purchases * np.asarray(value, dtype=float)
+    return n_purchases * value
 
 
 def dump_fitters(bgf, ggf) -> dict:
@@ -233,6 +289,16 @@ def load_fitters(params: dict):
     bgf.params_ = pd.Series(params["bgnbd"])
     ggf = GammaGammaFitter()
     ggf.params_ = pd.Series(params["gamma_gamma"])
+
+    # Same validity check as at fit time. Loading is the other door into this
+    # model, and a stale artifact saved before the penalizer fix would
+    # otherwise reintroduce negative predictions with no warning.
+    q = float(ggf.params_["q"])
+    if q <= 1:
+        raise ValueError(
+            f"loaded Gamma-Gamma has q={q:.4f} <= 1: its mean does not exist. "
+            "This artifact predates the penalizer fix; retrain it."
+        )
     return bgf, ggf
 
 
