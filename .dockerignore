@@ -1,0 +1,40 @@
+# Everything here is either irrelevant to the image or actively harmful in it.
+#
+# Without this file, `docker build` uploads the whole directory to the daemon
+# as build context BEFORE reading the Dockerfile. That means 41MB of
+# node_modules and 14MB of downloaded data travel across for no reason, on
+# every build.
+
+# Frontend: built and hosted separately on Vercel. Never goes in the API image.
+frontend/
+
+# The dataset is downloaded at runtime by rci.clean, not baked in.
+data/
+
+# Training-only artifacts. The Dockerfile names the serving ones explicitly,
+# but keeping these out of the context keeps builds fast.
+artifacts/clv.joblib
+artifacts/recommend.joblib
+
+# Local environments and caches
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Git history is not needed to run the app, and it is the biggest thing here.
+.git/
+.gitignore
+
+# Secrets must never enter an image layer. Even a deleted file survives in the
+# layer that added it, so the only safe move is to never copy it in.
+.env
+.env.*
+
+# Docs and tests: useful in the repo, dead weight in a RAM-billed container.
+docs/
+tests/
+notebooks/

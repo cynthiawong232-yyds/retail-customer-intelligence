@@ -1,6 +1,20 @@
+---
+title: Retail Customer Intelligence
+emoji: "\U0001F6D2"
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 8000
+pinned: false
+license: mit
+short_description: Four customer models on real UK retail data, behind one API
+---
+
 # Retail Customer Intelligence
 
 Four customer models on **real** transaction data, trained with a temporal split and served behind one API.
+
+> The block above is Hugging Face Space configuration, not documentation. GitHub renders it as a table; Hugging Face reads it to build the Space. `app_port: 8000` matches the Dockerfile's default.
 
 **Data:** [UCI Online Retail II](https://archive.ics.uci.edu/dataset/502/online+retail+ii), CC BY 4.0. 1,067,371 real transactions from a UK online gift wholesaler, Dec 2009 to Dec 2011. Downloaded at runtime, never committed. **No synthetic data anywhere in this repo.**
 
