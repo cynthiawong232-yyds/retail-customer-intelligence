@@ -45,8 +45,21 @@ def test_scaler_is_reusable_on_new_data(X):
     """
     scaled, scaler = prepare(X)
     half = X.iloc[: len(X) // 2]
-    reapplied = scaler.transform(np.log1p(half[RFM_COLUMNS]))
+    reapplied = scaler.transform(np.log1p(half[RFM_COLUMNS].to_numpy(dtype=np.float64)))
     assert np.allclose(reapplied, scaled[: len(half)])
+
+
+def test_scaler_stores_no_feature_names(X):
+    """The scaler must be fitted on a positional array, not a DataFrame.
+
+    If it memorises column names, sklearn warns on every serving call because
+    the container sends bare numpy (it has no pandas). Matching training to
+    serving is the fix; suppressing the warning would only hide a real
+    ordering risk. Order is instead guaranteed by RFM_COLUMNS plus tests.
+    """
+    _, scaler = prepare(X)
+    assert not hasattr(scaler, "feature_names_in_")
+    assert scaler.n_features_in_ == len(RFM_COLUMNS)
 
 
 def test_log_actually_compresses_the_tail(X):

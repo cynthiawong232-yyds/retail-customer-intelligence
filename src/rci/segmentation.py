@@ -72,7 +72,16 @@ def prepare(X: pd.DataFrame) -> tuple[np.ndarray, StandardScaler]:
     set's mean and standard deviation, not their own. Re-fitting a scaler at
     prediction time is a classic and silent production bug.
     """
-    rfm = X[RFM_COLUMNS]
+    # .to_numpy() is deliberate, not incidental. Fitting on a DataFrame makes
+    # sklearn memorise the column NAMES, and it then warns (rightly) whenever
+    # it is later handed a bare array it cannot check. The serving container
+    # has no pandas, so it can only send arrays.
+    #
+    # Rather than silence the warning, make training match serving: both work
+    # in plain positional arrays. Column ORDER is then guaranteed the only
+    # way it can be, by importing RFM_COLUMNS in both places and asserting it
+    # in tests, instead of by a check that cannot run in production anyway.
+    rfm = X[RFM_COLUMNS].to_numpy(dtype=np.float64)
 
     # log1p is log(1 + x), which is defined at x=0. Plain log(0) is -infinity
     # and would poison the whole column. Our values are all >= 1 today, but
